@@ -1,0 +1,99 @@
+task verifyStringFormats {
+    doLast {
+        def presentation = getMainProject()
+        def mainStringsFile = getMainStringsFile(presentation)
+        var brokenStringsCount = 0
+        for (final def translationFile in getTranslationFiles(presentation)) {
+            brokenStringsCount += verifyBrokenStrings(mainStringsFile, translationFile)
+        }
+        if (brokenStringsCount > 0) {
+            print "\nFound $brokenStringsCount broken strings"
+        }
+    }
+}
+
+private Project getMainProject() {
+    // provide a name of the module with strings 
+    return project.childProjects.find {
+        it.key.contains('app')
+    }.value
+}
+
+private File getMainStringsFile(project) {
+    return file("${project.projectDir}" + "/src/main/res/values/strings.xml")
+}
+
+/**
+ *
+ * @param project
+ * @return translation files with main locale excluded
+ */
+private File[] getTranslationFiles(project) {
+    return file("${project.projectDir}" + "/src/main/res/")
+            .listFiles()
+            .findAll { file ->
+                file.listFiles().find { it.name.contains('strings.xml') } != null
+            }
+            .collect { file(it.path + '/strings.xml') }
+            .findAll { !it.path.contains('values/strings.xml') }
+}
+
+private static int verifyBrokenStrings(File mainStringsFile, File translationFile) {
+    def mainStrings = getStringsFromFile(mainStringsFile)
+    def translationStrings = getStringsFromFile(translationFile)
+    def brokenStrings = getBrokenStrings(mainStrings, translationStrings)
+
+    for (final def brokenString in brokenStrings) {
+        print(brokenString)
+        print('\n')
+    }
+
+    return brokenStrings.size()
+}
+
+private static String[] getBrokenStrings(String[] defaultLocaleStrings, String[] translatedStrings) {
+    def stringFormatRegex = '(\\%\\d{1,2}\\$[d,s])|(\\%[d,s])'
+    def brokenStrings = []
+    for (final def defLocaleString in defaultLocaleStrings) {
+        def defLocaleStringKey = defLocaleString.substring(0, defLocaleString.indexOf('">')) + '">'
+        def translatedStringResource = translatedStrings.find { it.contains(defLocaleStringKey) }
+        if (translatedStringResource != null) {
+            def defLocaleMatcher = defLocaleString =~ stringFormatRegex
+            def otherLocaleMatcher = translatedStringResource =~ stringFormatRegex
+            if (defLocaleMatcher.count != otherLocaleMatcher.count) {
+                brokenStrings.add(translatedStringResource)
+            }
+        }
+    }
+    return brokenStrings
+}
+
+/**
+ *
+ * @param file
+ * @return string array contains each string separated in format <string name="something">something</string>
+ */
+private static String[] getStringsFromFile(file) {
+    def resourcesRootSuffix = '</resources>'
+    def stringResourcePrefix = '<string name="'
+    def stringResourceSuffix = '</string>'
+
+    var stringResourcesFileText = file.getText('utf-8')
+    if (stringResourcesFileText.contains(stringResourcePrefix)) {
+        // remove xml version and resources parent and keep strings only
+        stringResourcesFileText = stringResourcesFileText.substring(
+                stringResourcesFileText.indexOf(stringResourcePrefix),
+                stringResourcesFileText.lastIndexOf(resourcesRootSuffix)
+        )
+        return stringResourcesFileText
+                .split(stringResourceSuffix)
+                .collect { it -> it.toString() }
+                .findAll { !it.allWhitespace }
+                .collect { it + stringResourceSuffix }
+                .collect {
+                    it.substring(it.indexOf(stringResourcePrefix), it.length()).trim()
+                }
+    } else {
+        return []
+    }
+}
